@@ -1,0 +1,15 @@
+{
+  "name": "おかねノート",
+  "short_name": "おかねノート",
+  "description": "シンプルな家計簿アプリ",
+  "lang": "ja",
+  "start_url": "./index.html#/home",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f3f6f5",
+  "theme_color": "#ffffff",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

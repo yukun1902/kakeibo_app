@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>おかねノート</title>
+
+  <!-- スマホ向け設定（ホーム画面に追加したときアプリのように全画面で開く） -->
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#1a2320" media="(prefers-color-scheme: dark)">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="おかねノート">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <script>
+    // 画面のちらつきを防ぐため、テーマとPCプレビューの設定だけ先に反映する
+    try {
+      var t = localStorage.getItem('okane-note:theme');
+      if (t) document.documentElement.dataset.theme = t;
+      if (sessionStorage.getItem('okane-note:pc-preview')) document.documentElement.classList.add('pc-preview');
+    } catch (e) {}
+  </script>
+</head>
+<body>
+  <div id="app" class="app"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <!-- PCで開いたときだけ表示される案内 -->
+  <div class="pc-guard">
+    <div class="pc-guard-card">
+      <img src="icon.svg" alt="" width="72" height="72">
+      <h1>おかねノートは<br>スマートフォン専用です</h1>
+      <p>スマートフォンのブラウザで開いてください。</p>
+      <button type="button" id="pcPreview" class="btn primary">PCでプレビューする</button>
+      <small>開発中は、ブラウザの開発者ツール（F12）で<br>スマホ表示に切り替えて確認するのがおすすめです。</small>
+    </div>
+  </div>
+
+  <script src="js/api.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
