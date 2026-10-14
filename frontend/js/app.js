@@ -2,6 +2,8 @@
 /**
  * 画面（ビュー）とルーティング
  * URLの # 以降で画面を切り替えるシングルページアプリです。
+ *   #/login           ログイン（ログインしていなくても開ける）
+ *   #/register        新規登録（ログインしていなくても開ける）
  *   #/home            ① ホーム
  *   #/add             ② 支出の追加（カテゴリー選択）
  *   #/add/input       ③ 支出の追加（入力）
@@ -13,8 +15,35 @@
  *   #/expenses/{id}   ⑨ 支出の詳細
  *   #/filter          ⑩ 期間フィルター
  *   #/menu            ⑪ メニュー（その他）
+ *
+ * 【シングルページアプリ（SPA）とは】
+ *   HTML ファイルは index.html の1つだけ。画面を移るときにページを読み込み直さず、
+ *   JavaScript で <div id="app"> の中身を書き換えて、別の画面に見せている。
+ *   どの画面を出すかは URL の # 以降（例: #/list）で決める。# 以降が変わると hashchange というイベントが起き、
+ *   render() が呼ばれて画面が描き直される。
+ *
+ * 【1つの画面の作り方】
+ *   画面ごとに viewXxx() という関数があり、次のような「画面の設計図」を返す。
+ *     {
+ *       header:  '<header>…</header>',   // 上のバー（HTML の文字列）
+ *       body:    '<div>…</div>',         // 画面の中身（HTML の文字列）
+ *       nav:     'home',                 // 下のナビで光らせるタブ（書かなければナビなし）
+ *       actions: { 'list-tab': 関数 },   // ボタンを押したときの処理（下の「ボタンの処理」を参照）
+ *       mount()  { … },                  // 画面を表示した直後に1回だけ呼ぶ処理（フォームの送信処理の登録など）
+ *     }
+ *   render() がこれを受け取って、#app の中に表示する。
+ *
+ * 【ボタンの処理】
+ *   ボタンに data-action="list-tab" のような目印を付けておくと、押されたときに
+ *   その画面の actions['list-tab'] が呼ばれる（ファイルの最後の方にある click の処理を参照）。
+ *
+ * 【データの読み書き】
+ *   すべて api.js の Api.〇〇() を通して、Go の API に頼む（例: Api.listExpenses()）。
+ *   API の返事を待つ必要があるので、async / await を使っている。
+ *   （await = 「返事が来るまで待ってから次の行へ進む」）
  */
 (() => {
+  // $ で始まる変数は「画面の要素」だとわかるようにするための名前の付け方（ただの習慣）
   const $app = document.getElementById('app');
   const $toast = document.getElementById('toast');
 
@@ -72,11 +101,14 @@
   }
 
   // ===== 画面をまたいで保持する状態 =====
+  // 画面を移っても覚えておきたい値をここに置く。値を変えたら render() を呼んで描き直す
+  // （例: 「次の月」ボタン → state.month を1か月進める → render() → 新しい月の画面になる）
   const state = {
     month: startOfMonth(new Date()), // ホーム・一覧・グラフ・カレンダーで共通の表示月
-    graphMode: 'month',
-    calSelected: today(),
+    graphMode: 'month',              // グラフ画面の「月／年」の切り替え
+    calSelected: today(),            // カレンダーで選んでいる日
     filter: null, // { period, from, to, categoryIds }
+    lastEmail: '', // 最後にログインしたメールアドレス（ログアウト後の入力の手間を省く）
   };
 
   // ===== アイコン（SVG） =====
@@ -97,15 +129,18 @@
     close: '<path d="M18 6 6 18M6 6l12 12"/>',
     filter: '<path d="M22 3H2l8 9.46V19l4 2v-8.54z"/>',
     leaf: '<path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/>',
-    download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>',
-    upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>',
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
     help: '<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01"/>',
     info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>',
     tag: '<path d="M12.6 2.6A2 2 0 0 0 11.2 2H4a2 2 0 0 0-2 2v7.2a2 2 0 0 0 .6 1.4l8.7 8.7a2.4 2.4 0 0 0 3.4 0l6.6-6.6a2.4 2.4 0 0 0 0-3.4z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
-    refresh: '<path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5"/>',
     grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
     check: '<path d="M20 6 9 17l-5-5"/>',
+    user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+    logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
+    mail: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/>',
+    lock: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+    eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+    eyeOff: '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 19c-6.5 0-10-7-10-7a18.5 18.5 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c6.5 0 10 7 10 7a18.5 18.5 0 0 1-2.16 3.19M1 1l22 22"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/>',
   };
   const ic = (name, cls = '') =>
     `<svg class="ic ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
@@ -371,8 +406,10 @@
   }
 
   // ===== ① ホーム =====
+  // ここから下が各画面の viewXxx()。どれも「API からデータをもらう → HTML の文字列を組み立てて返す」という形
   async function viewHome() {
     const range = monthRange(state.month);
+    // Promise.all … 4つのお願いを同時に API へ出して、全部の返事がそろうまで待つ（1つずつ待つより速い）
     const [s, prev, list, cats] = await Promise.all([
       Api.getSummary(range),
       Api.getSummary(monthRange(addMonths(state.month, -1))),
@@ -796,6 +833,7 @@
   }
 
   async function viewMenu() {
+    const me = await Api.me();
     const item = (icon, label, action, value = '', cls = '') => `
       <li><button class="menu-item ${cls}" data-action="${action}">
         ${ic(icon)}<span class="label">${label}</span>${value ? `<span class="value">${value}</span>` : ''}${ic('next', 'chev')}
@@ -804,44 +842,23 @@
       nav: '',
       header: topbar({ title: 'その他', back: '#/home' }),
       body: `
+        <div class="account card">
+          <span class="account-icon">${ic('user')}</span>
+          <div class="account-main">
+            <small>ログイン中のアカウント</small>
+            <b>${esc(me.email)}</b>
+          </div>
+        </div>
         <ul class="menu card flush">
           <li><a class="menu-item" href="#/categories">${ic('tag')}<span class="label">カテゴリー管理</span>${ic('next', 'chev')}</a></li>
-          ${item('download', 'データのバックアップ', 'backup')}
-          ${item('upload', 'バックアップから復元', 'restore')}
           ${item('sun', 'テーマ設定', 'theme', THEMES[getTheme()])}
           ${item('help', '使い方ガイド', 'guide')}
           ${item('info', 'アプリについて', 'about')}
         </ul>
         <ul class="menu card flush">
-          ${item('refresh', 'サンプルデータに戻す', 'reset', '', 'danger')}
-        </ul>
-        <input type="file" id="restoreFile" accept="application/json,.json" hidden>`,
-      mount() {
-        $app.querySelector('#restoreFile').addEventListener('change', async e => {
-          const file = e.target.files[0];
-          if (!file) return;
-          try {
-            const data = JSON.parse(await file.text());
-            if (!await confirmDialog('今のデータを上書きして復元しますか？', '復元する')) return;
-            await Api.importAll(data);
-            toast('復元しました');
-          } catch (ex) {
-            toast(ex instanceof SyntaxError ? 'ファイルを読み込めませんでした' : ex.message, 'error');
-          }
-        });
-      },
+          ${item('logout', 'ログアウト', 'logout', '', 'danger')}
+        </ul>`,
       actions: {
-        backup: async () => {
-          const data = await Api.exportAll();
-          const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-          const a = document.createElement('a');
-          a.href = URL.createObjectURL(blob);
-          a.download = `okane-note-${today().replaceAll('-', '')}.json`;
-          a.click();
-          setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-          toast('バックアップを保存しました');
-        },
-        restore: () => $app.querySelector('#restoreFile').click(),
         theme: () => {
           const current = getTheme();
           openSheet(`
@@ -874,21 +891,170 @@
           <div class="about">
             <span class="about-logo">${ic('leaf')}</span>
             <b>おかねノート</b>
-            <small class="muted">バージョン 0.2.0（デザイン版）</small>
-            <p class="prose">支出を記録する家計簿アプリです。いまはデータをこのブラウザの中にだけ保存しています。今後、Go で作る REST API とつないで PostgreSQL に保存できるようにする予定です。</p>
+            <small class="muted">バージョン 0.3.0</small>
+            <p class="prose">支出を記録する家計簿アプリです。データはサーバー（PostgreSQL）に保存され、ログインした本人だけが見ることができます。</p>
           </div>`),
-        reset: async () => {
-          if (!await confirmDialog('すべてのデータを消して、サンプルデータに戻しますか？', '戻す')) return;
-          await Api.reset();
-          state.filter = null;
-          toast('サンプルデータに戻しました');
+        logout: async () => {
+          if (!await confirmDialog('ログアウトしますか？', 'ログアウト')) return;
+          Api.logout();
+          resetState();
+          toast('ログアウトしました');
+          go('#/login', { replace: true });
         },
       },
     };
   }
 
+  // ===== ログイン・会員登録 =====
+  function authPage({ title, form, footer }) {
+    return {
+      header: '',
+      mainClass: 'auth',
+      body: `
+        <div class="auth-hero">
+          <img class="auth-logo" src="icon.svg" alt="" width="76" height="76">
+          <h1 class="auth-brand">おかねノート</h1>
+          <p class="auth-lead">毎日の支出を、かんたんに記録</p>
+        </div>
+        <section class="card auth-card">
+          <h2 class="auth-title">${title}</h2>
+          ${form}
+        </section>
+        <p class="auth-switch">${footer}</p>`,
+      actions: {
+        // パスワードの表示・非表示を切り替える
+        'toggle-pw': (_, btn) => {
+          const input = btn.parentElement.querySelector('input');
+          const show = input.type === 'password';
+          input.type = show ? 'text' : 'password';
+          btn.innerHTML = ic(show ? 'eyeOff' : 'eye');
+          btn.setAttribute('aria-label', show ? 'パスワードを隠す' : 'パスワードを表示');
+        },
+      },
+    };
+  }
+
+  const emailField = (value = '') => `
+    <label class="field">
+      <span class="field-label">${ic('mail')}メールアドレス</span>
+      <input class="input" type="email" name="email" autocomplete="email" inputmode="email"
+        autocapitalize="off" spellcheck="false" placeholder="taro@example.com" value="${esc(value)}">
+    </label>`;
+
+  const passwordField = (name, label, autocomplete) => `
+    <label class="field">
+      <span class="field-label">${ic('lock')}${label}</span>
+      <span class="input-wrap">
+        <input class="input pw" type="password" name="${name}" autocomplete="${autocomplete}" placeholder="8文字以上">
+        <button type="button" class="pw-toggle" data-action="toggle-pw" aria-label="パスワードを表示">${ic('eye')}</button>
+      </span>
+    </label>`;
+
+  // ログイン・会員登録フォームの送信処理（入力チェック → onSubmit）
+  function bindAuthForm(onSubmit, validate) {
+    const form = $app.querySelector('#authForm');
+    const err = form.querySelector('.form-error');
+    const button = form.querySelector('.btn.primary');
+    const showError = msg => { err.textContent = msg; err.hidden = false; };
+
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      err.hidden = true;
+      const data = {
+        email: form.elements.email.value.trim(),
+        password: form.elements.password.value,
+        confirm: form.elements.confirm?.value,
+      };
+      const msg = !data.email ? 'メールアドレスを入力してください'
+        : !data.password ? 'パスワードを入力してください'
+        : validate?.(data) || '';
+      if (msg) { showError(msg); return; }
+
+      // 二重送信を防ぐため、送信中はボタンを押せなくする
+      const label = button.textContent;
+      button.disabled = true;
+      button.textContent = '送信中…';
+      try {
+        await onSubmit(data);
+      } catch (ex) {
+        showError(ex.message);
+        button.disabled = false;
+        button.textContent = label;
+      }
+    });
+  }
+
+  async function viewLogin() {
+    return {
+      ...authPage({
+        title: 'ログイン',
+        form: `<form class="form" id="authForm" novalidate>
+          ${emailField(state.lastEmail)}
+          ${passwordField('password', 'パスワード', 'current-password')}
+          <p class="form-error" role="alert" hidden></p>
+          <button class="btn primary block">ログイン</button>
+        </form>`,
+        footer: 'アカウントをお持ちでない方は <a class="link" href="#/register">新規登録</a>',
+      }),
+      mount() {
+        bindAuthForm(async ({ email, password }) => {
+          await Api.login({ email, password });
+          state.lastEmail = email;
+          toast('ログインしました');
+          go('#/home', { replace: true });
+        });
+      },
+    };
+  }
+
+  async function viewRegister() {
+    return {
+      ...authPage({
+        title: '新規登録',
+        form: `<form class="form" id="authForm" novalidate>
+          ${emailField()}
+          ${passwordField('password', 'パスワード', 'new-password')}
+          ${passwordField('confirm', 'パスワード（確認）', 'new-password')}
+          <p class="hint">パスワードは8文字以上で入力してください。</p>
+          <p class="form-error" role="alert" hidden></p>
+          <button class="btn primary block">登録する</button>
+        </form>`,
+        footer: 'すでにアカウントをお持ちの方は <a class="link" href="#/login">ログイン</a>',
+      }),
+      mount() {
+        bindAuthForm(async ({ email, password }) => {
+          await Api.register({ email, password });
+          // 登録できたら、そのままログインしてホームへ
+          await Api.login({ email, password });
+          state.lastEmail = email;
+          toast('登録しました。ようこそ！');
+          go('#/home', { replace: true });
+        }, ({ password, confirm }) =>
+          [...password].length < 8 ? 'パスワードは8文字以上で入力してください'
+            : password !== confirm ? '確認用のパスワードが一致しません'
+            : '');
+      },
+    };
+  }
+
+  // ログアウトしたときなど、画面の状態を最初に戻す
+  function resetState() {
+    state.month = startOfMonth(new Date());
+    state.graphMode = 'month';
+    state.calSelected = today();
+    state.filter = null;
+  }
+
+  const errorView = msg => ({
+    header: topbar({ title: 'エラー', back: '#/home' }),
+    body: `<p class="empty">${esc(msg)}</p><button class="btn soft block" data-action="reload">もう一度読み込む</button>`,
+  });
+
   // ===== ルーティング =====
+  // 3つ目が true の画面は、ログインしていなくても開ける
   const routes = [
+    [/^\/login$/, viewLogin, true],
+    [/^\/register$/, viewRegister, true],
     [/^\/home$/, viewHome],
     [/^\/add$/, viewAddSelect],
     [/^\/add\/input$/, viewAddInput],
@@ -908,25 +1074,37 @@
     'prev-year': () => { state.month = addMonths(state.month, -12); render(); },
     'next-year': () => { state.month = addMonths(state.month, 12); render(); },
     'history-back': () => { if (history.length > 1) history.back(); else go('#/home'); },
+    reload: () => render(),
   };
 
-  let actions = {};
-  let renderSeq = 0;
-  let lastPath = '';
+  let actions = {};   // いま表示している画面のボタン処理
+  let renderSeq = 0;  // 何回目の描き直しか（古い描き直しが後から終わったときに無視するため）
+  let lastPath = '';  // 前回表示した画面（同じ画面の描き直しならスクロール位置を保つため）
 
+  // render は「今の URL に合う画面を表示する」関数。画面を移るたびに呼ばれる
+  //   1. URL の # 以降を見て、routes から合う画面を探す
+  //   2. ログインしていないのにログインが必要な画面なら、ログイン画面へ移す
+  //   3. その画面の viewXxx() を呼んで設計図をもらう（ここで API からデータを取ってくる）
+  //   4. 設計図の HTML を #app に入れて表示し、mount() を呼ぶ
   async function render() {
     const seq = ++renderSeq;
     const hash = location.hash.replace(/^#/, '') || '/home';
     const [path, qs = ''] = hash.split('?');
     const route = routes.find(([re]) => re.test(path));
-    if (!route) { go('#/home', { replace: true }); return; }
+    if (!route) { go(Api.isLoggedIn() ? '#/home' : '#/login', { replace: true }); return; }
+
+    // ログインしていなければログイン画面へ。ログイン済みでログイン画面を開いたらホームへ
+    const isPublic = route[2] === true;
+    if (!isPublic && !Api.isLoggedIn()) { go('#/login', { replace: true }); return; }
+    if (isPublic && Api.isLoggedIn()) { go('#/home', { replace: true }); return; }
 
     let view;
     try {
       view = await route[1](...path.match(route[0]).slice(1), new URLSearchParams(qs));
     } catch (ex) {
+      if (ex.status === 401) return; // ログインの期限切れ → onUnauthorized でログイン画面へ移る
       console.error(ex);
-      view = notFound('読み込み中にエラーが発生しました');
+      view = errorView(ex.message || '読み込み中にエラーが発生しました');
     }
     if (seq !== renderSeq || view === null) return; // 途中で別の画面に移った／リダイレクトした
 
@@ -934,21 +1112,35 @@
     const samePage = path === lastPath;
     const scroll = samePage ? $app.querySelector('.content')?.scrollTop || 0 : 0;
     actions = view.actions || {};
-    $app.innerHTML = `${view.header}<main class="content">${view.body}</main>${view.nav !== undefined ? tabbar(view.nav) : ''}`;
+    $app.innerHTML = `${view.header}<main class="content ${view.mainClass || ''}">${view.body}</main>${view.nav !== undefined ? tabbar(view.nav) : ''}`;
     $app.querySelector('.content').scrollTop = scroll;
     lastPath = path;
-    const title = $app.querySelector('.topbar h1')?.textContent;
+    const title = $app.querySelector('.topbar h1, .auth-title')?.textContent;
     document.title = title ? `${title} | おかねノート` : 'おかねノート';
     view.mount?.();
   }
 
+  // 【ボタンの処理をまとめて受け付ける】
+  //   ボタン1つ1つに処理を登録するのではなく、#app 全体で「クリックされた」を1回だけ受け取り、
+  //   押された場所から一番近い data-action を持つ要素を探して、対応する処理を呼ぶ（イベント委譲という書き方）。
+  //   画面を描き直してボタンが作り直されても、登録し直さなくて済む。
   $app.addEventListener('click', e => {
     const el = e.target.closest('[data-action]');
     if (!el) return;
     const fn = actions[el.dataset.action] || globalActions[el.dataset.action];
     if (!fn) return;
     e.preventDefault();
-    fn(el.dataset, el);
+    // 削除などでAPIがエラーを返したら、メッセージを表示する
+    Promise.resolve(fn(el.dataset, el)).catch(ex => {
+      if (ex?.status !== 401) toast(ex?.message || 'エラーが発生しました', 'error');
+    });
+  });
+
+  // ログインの期限が切れたら（APIが401を返したら）ログイン画面へ戻す
+  Api.onUnauthorized(() => {
+    resetState();
+    toast('ログインの有効期限が切れました。もう一度ログインしてください', 'error');
+    go('#/login', { replace: true });
   });
 
   document.addEventListener('keydown', e => {
@@ -964,6 +1156,6 @@
   });
 
   window.addEventListener('hashchange', render);
-  if (!location.hash) location.replace('#/home');
+  if (!location.hash) location.replace(Api.isLoggedIn() ? '#/home' : '#/login');
   render();
 })();

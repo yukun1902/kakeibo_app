@@ -674,3 +674,49 @@ ol.prose { padding-left: 1.4em; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ---- ログイン・新規登録 ---- */
+.content.auth {
+  gap: 18px;
+  padding-top: calc(32px + var(--safe-top));
+  background: linear-gradient(180deg, var(--primary-soft) 0%, var(--bg) 42%);
+}
+.auth-hero { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
+.auth-logo {
+  border-radius: 22px;
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--primary) 35%, transparent);
+  margin-bottom: 6px;
+}
+.auth-brand { margin: 0; font-size: 24px; font-weight: 700; }
+.auth-lead { margin: 0; color: var(--muted); font-size: 14px; }
+.auth-card { padding: 22px 18px; }
+.auth-title { margin: 0 0 16px; font-size: 18px; font-weight: 700; text-align: center; }
+.auth-card .form > .btn.block { margin-top: 4px; }
+.auth-switch { margin: 0; text-align: center; font-size: 14px; color: var(--muted); }
+.auth-switch .link { font-size: 14px; }
+
+/* パスワードの表示・非表示ボタン */
+.input.pw { padding-right: 52px; }
+.pw-toggle {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  width: 44px; height: 44px;
+  display: grid; place-items: center;
+  border: 0; border-radius: 10px;
+  background: none; color: var(--muted); cursor: pointer;
+}
+.pw-toggle .ic { width: 20px; height: 20px; }
+.btn:disabled { opacity: .6; cursor: default; }
+
+/* ---- メニューのアカウント表示 ---- */
+.account { display: flex; align-items: center; gap: 14px; }
+.account-icon {
+  width: 48px; height: 48px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--primary-soft); color: var(--primary); flex-shrink: 0;
+}
+.account-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.account-main small { font-size: 12px; color: var(--muted); }
+.account-main b { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 画面より短いときは上下中央に、長いときは上から並べる（中央寄せで上が切れないように） */
+.content.auth > :first-child { margin-top: auto; }
+.content.auth > :last-child { margin-bottom: auto; }

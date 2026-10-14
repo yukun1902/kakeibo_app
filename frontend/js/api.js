@@ -1,27 +1,21 @@
 'use strict';
 /**
- * データ層（APIの代わり）
+ * データ層：Go の REST API（../main.go）を呼び出す
  *
- * いまはブラウザの localStorage に保存しています。
- * Go で REST API を作ったら、各関数の中身を fetch() に置き換えるだけで
- * 画面側（app.js）はそのまま使えるようにしてあります。
- * 各関数の上のコメントが「対応させる予定のエンドポイント」です。
+ * ログインすると JWT（ログインの証明書）を受け取り、このブラウザに保存する。
+ * それ以降のリクエストには「Authorization: Bearer <JWT>」を付けて送る。
  *
- * データの形は PostgreSQL のテーブル（db/schema.sql）に合わせています。
+ * データの形は PostgreSQL のテーブルと同じ:
  *   categories: { id, name }
  *   expenses:   { id, category_id, amount, date, memo, created_at }
  */
 const Api = (() => {
-  const KEY = 'okane-note:data:v2';
+  // Go のサーバーから画面を開いたときは同じ場所の /api を使う。
+  // index.html をファイルとして直接開いたときは、ローカルのサーバーにつなぐ。
+  const BASE = location.protocol === 'file:' ? 'http://localhost:8080/api' : '/api';
+  const TOKEN_KEY = 'okane-note:token';
 
-  const DEFAULT_CATEGORIES = ['食費', '住居', '交通費', '娯楽', '日用品', '美容・健康', '交際費', 'その他']
-    .map((name, i) => ({ id: i + 1, name }));
-
-  const pad = n => String(n).padStart(2, '0');
-  const toYmd = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  const clone = v => JSON.parse(JSON.stringify(v));
-
-  // Go側で返す予定のHTTPステータスを持たせたエラー
+  // Go側から返ってくるエラー（status は HTTP ステータス。0 はサーバーにつながらなかったとき）
   class ApiError extends Error {
     constructor(status, message) {
       super(message);
@@ -29,236 +23,124 @@ const Api = (() => {
     }
   }
 
-  // 動作確認用のサンプルデータ（直近7か月分）
-  function seedExpenses() {
-    let s = 20251024;
-    const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
-    const between = (min, max) => Math.round((min + rnd() * (max - min)) / 10) * 10;
+  let token = null;
+  try { token = localStorage.getItem(TOKEN_KEY); } catch (e) { /* 保存できない環境では毎回ログインが必要 */ }
 
-    const now = new Date();
-    const list = [];
-    const add = (date, categoryId, amount, memo) => {
-      const created = new Date(date.getFullYear(), date.getMonth(), date.getDate(),
-        9 + Math.floor(rnd() * 12), Math.floor(rnd() * 60));
-      list.push({
-        id: list.length + 1, category_id: categoryId, amount,
-        date: toYmd(date), memo, created_at: created.toISOString(),
+  function setToken(value) {
+    token = value;
+    try {
+      if (value) localStorage.setItem(TOKEN_KEY, value);
+      else localStorage.removeItem(TOKEN_KEY);
+    } catch (e) { /* 保存できなくてもこのページを開いている間は使える */ }
+  }
+
+  // ログインの期限切れなどで 401 が返ったときに呼ぶ処理（app.js が登録する）
+  let unauthorizedHandler = null;
+
+  // request は、API にお願いを1回送って、返事（JSON）を受け取る関数。すべての API 呼び出しがここを通る
+  //   method … 'GET'（取得）/ 'POST'（追加）/ 'PUT'（更新）/ 'DELETE'（削除）
+  //   path   … '/expenses' や '/expenses/3' など
+  //   body   … 送るデータ（POST や PUT のとき）。JSON の文字に変換して送る
+  //
+  // 【fetch とは】
+  //   ブラウザに最初からある「サーバーにリクエストを送る」機能。
+  //   await fetch(...) で返事が来るまで待ち、await res.json() で返事の JSON を JavaScript のデータに戻す。
+  async function request(method, path, body) {
+    const headers = {};
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    if (token) headers.Authorization = `Bearer ${token}`;
+
+    let res;
+    try {
+      res = await fetch(BASE + path, {
+        method,
+        headers,
+        body: body !== undefined ? JSON.stringify(body) : undefined,
       });
-    };
+    } catch (e) {
+      throw new ApiError(0, 'サーバーに接続できません。サーバーが起動しているか確認してください');
+    }
 
-    const patterns = [
-      // [カテゴリーID, メモ候補, 最小, 最大, 月あたりの回数]
-      [1, ['スーパー', 'コンビニ', 'ランチ', 'カフェ', 'パン屋'], 300, 3500, 14],
-      [3, ['電車', 'バス', 'ICカードチャージ'], 200, 3000, 5],
-      [4, ['映画', 'ゲーム', '本', 'カラオケ'], 800, 4000, 3],
-      [5, ['ドラッグストア', '100円ショップ'], 300, 2500, 3],
-      [6, ['美容院', 'ジム'], 2000, 5000, 1],
-      [7, ['飲み会', 'プレゼント'], 2000, 6000, 1],
-      [8, ['雑費', null], 300, 3000, 2],
-    ];
+    if (res.status === 204) return null; // 削除成功など、中身なし
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      // ログイン中なのに 401 → 期限切れ。保存しているトークンを捨ててログイン画面へ
+      if (res.status === 401 && token) {
+        setToken(null);
+        unauthorizedHandler?.();
+      }
+      throw new ApiError(res.status, data?.error || `エラーが発生しました（${res.status}）`);
+    }
+    return data;
+  }
 
-    for (let m = 6; m >= 0; m--) {
-      const first = new Date(now.getFullYear(), now.getMonth() - m, 1);
-      const days = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
-      const last = m === 0 ? now.getDate() : days;
-      const day = n => new Date(first.getFullYear(), first.getMonth(), n);
-
-      if (last >= 1) add(day(1), 2, 58000, '家賃');
-      if (last >= 27) add(day(27), 2, between(6000, 10000), '光熱費');
-
-      for (const [cid, memos, min, max, times] of patterns) {
-        for (let i = 0; i < times; i++) {
-          const d = 1 + Math.floor(rnd() * days);
-          if (d > last) continue;
-          add(day(d), cid, between(min, max), memos[Math.floor(rnd() * memos.length)]);
-        }
+  // { from: '2026-10-01', category_id: [1, 2] } → "?from=2026-10-01&category_id=1,2"
+  function query(params) {
+    const p = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (value === undefined || value === null || value === '') continue;
+      if (Array.isArray(value)) {
+        if (value.length) p.set(key, value.join(','));
+      } else {
+        p.set(key, value);
       }
     }
-    return list;
+    const s = p.toString();
+    return s ? `?${s}` : '';
   }
-
-  function freshDb() {
-    const expenses = seedExpenses();
-    return {
-      categories: clone(DEFAULT_CATEGORIES),
-      expenses,
-      nextId: { category: DEFAULT_CATEGORIES.length + 1, expense: expenses.length + 1 },
-    };
-  }
-
-  function load() {
-    try {
-      const raw = localStorage.getItem(KEY);
-      if (raw) return JSON.parse(raw);
-    } catch (e) { /* 読めなければ初期データで始める */ }
-    return freshDb();
-  }
-
-  let db = load();
-
-  function save() {
-    try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) { /* 保存できない環境ではメモリ上だけで動く */ }
-  }
-
-  const findCategory = id => db.categories.find(c => c.id === id);
-  const findExpense = id => db.expenses.find(e => e.id === id);
-
-  // Go側でも同じチェックをする想定
-  function validateExpense(input) {
-    const amount = Number(input.amount);
-    if (!Number.isInteger(amount) || amount < 1 || amount > 999999999) {
-      throw new ApiError(400, '金額は1円以上の整数で入力してください');
-    }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date || '')) throw new ApiError(400, '日付が正しくありません');
-    const cat = findCategory(Number(input.category_id));
-    if (!cat) throw new ApiError(400, 'カテゴリーが正しくありません');
-    const memo = String(input.memo || '').trim();
-    return { category_id: cat.id, amount, date: input.date, memo: memo || null };
-  }
-
-  function validateCategory(input, selfId) {
-    const name = String(input.name || '').trim();
-    if (!name) throw new ApiError(400, 'カテゴリー名を入力してください');
-    if (name.length > 100) throw new ApiError(400, 'カテゴリー名は100文字以内で入力してください');
-    if (db.categories.some(c => c.name === name && c.id !== selfId)) {
-      throw new ApiError(409, '同じ名前のカテゴリーがすでにあります');
-    }
-    return { name };
-  }
-
-  function query({ from, to, categoryIds } = {}) {
-    return db.expenses.filter(e =>
-      (!from || e.date >= from) &&
-      (!to || e.date <= to) &&
-      (!categoryIds || !categoryIds.length || categoryIds.includes(e.category_id)));
-  }
-
-  const sortExpenses = (a, b) => b.date.localeCompare(a.date) || b.created_at.localeCompare(a.created_at) || b.id - a.id;
-  const total = list => list.reduce((acc, e) => acc + e.amount, 0);
 
   return {
     ApiError,
 
-    // GET /categories
-    async listCategories() {
-      return clone([...db.categories].sort((a, b) => a.id - b.id));
+    // ---- 会員登録・ログイン ----
+    isLoggedIn: () => !!token,
+    onUnauthorized(fn) { unauthorizedHandler = fn; },
+
+    // POST /api/register
+    register: ({ email, password }) => request('POST', '/register', { email, password }),
+
+    // POST /api/login（受け取った JWT を保存する）
+    async login({ email, password }) {
+      const data = await request('POST', '/login', { email, password });
+      setToken(data.token);
+      return data;
     },
 
-    // POST /categories
-    async createCategory(input) {
-      const c = { id: db.nextId.category++, ...validateCategory(input) };
-      db.categories.push(c);
-      save();
-      return clone(c);
-    },
+    // JWT はサーバーに保存していないので、ブラウザから消せばログアウトになる
+    logout() { setToken(null); },
 
-    // PUT /categories/{id}
-    async updateCategory(id, input) {
-      const c = findCategory(id);
-      if (!c) throw new ApiError(404, 'カテゴリーが見つかりません');
-      Object.assign(c, validateCategory(input, id));
-      save();
-      return clone(c);
-    },
+    // GET /api/me
+    me: () => request('GET', '/me'),
 
-    // DELETE /categories/{id}
-    // 支出で使われているカテゴリーは外部キー制約で消せない → 409 を返す想定
-    async deleteCategory(id) {
-      if (!findCategory(id)) throw new ApiError(404, 'カテゴリーが見つかりません');
-      if (db.expenses.some(e => e.category_id === id)) {
-        throw new ApiError(409, 'このカテゴリーは支出で使われているため削除できません');
-      }
-      db.categories = db.categories.filter(c => c.id !== id);
-      save();
-    },
+    // ---- カテゴリー ----
+    // GET /api/categories
+    listCategories: () => request('GET', '/categories'),
+    // POST /api/categories
+    createCategory: ({ name }) => request('POST', '/categories', { name }),
+    // PUT /api/categories/{id}
+    updateCategory: (id, { name }) => request('PUT', `/categories/${id}`, { name }),
+    // DELETE /api/categories/{id}
+    deleteCategory: id => request('DELETE', `/categories/${id}`),
 
-    // GET /expenses?from=2025-10-01&to=2025-10-31&category_id=1,2
-    async listExpenses(params) {
-      return clone(query(params).sort(sortExpenses));
-    },
+    // ---- 支出 ----
+    // GET /api/expenses?from=&to=&category_id=1,2
+    listExpenses: ({ from, to, categoryIds } = {}) =>
+      request('GET', '/expenses' + query({ from, to, category_id: categoryIds })),
+    // GET /api/expenses/{id}
+    getExpense: id => request('GET', `/expenses/${id}`),
+    // POST /api/expenses
+    createExpense: ({ category_id, amount, date, memo }) =>
+      request('POST', '/expenses', { category_id, amount, date, memo }),
+    // PUT /api/expenses/{id}
+    updateExpense: (id, { category_id, amount, date, memo }) =>
+      request('PUT', `/expenses/${id}`, { category_id, amount, date, memo }),
+    // DELETE /api/expenses/{id}
+    deleteExpense: id => request('DELETE', `/expenses/${id}`),
 
-    // GET /expenses/{id}
-    async getExpense(id) {
-      const e = findExpense(id);
-      if (!e) throw new ApiError(404, '支出が見つかりません');
-      return clone(e);
-    },
-
-    // POST /expenses
-    async createExpense(input) {
-      const e = { id: db.nextId.expense++, ...validateExpense(input), created_at: new Date().toISOString() };
-      db.expenses.push(e);
-      save();
-      return clone(e);
-    },
-
-    // PUT /expenses/{id}
-    async updateExpense(id, input) {
-      const e = findExpense(id);
-      if (!e) throw new ApiError(404, '支出が見つかりません');
-      Object.assign(e, validateExpense(input));
-      save();
-      return clone(e);
-    },
-
-    // DELETE /expenses/{id}
-    async deleteExpense(id) {
-      if (!findExpense(id)) throw new ApiError(404, '支出が見つかりません');
-      db.expenses = db.expenses.filter(e => e.id !== id);
-      save();
-    },
-
-    // GET /summary?from=2025-10-01&to=2025-10-31
-    // → 期間の合計・件数と、カテゴリー別の合計（多い順）
-    async getSummary({ from, to }) {
-      const list = query({ from, to });
-      const byCat = new Map();
-      for (const e of list) byCat.set(e.category_id, (byCat.get(e.category_id) || 0) + e.amount);
-      const by_category = [...byCat].map(([category_id, amount]) => ({
-        category_id, name: findCategory(category_id)?.name ?? '不明', amount,
-      })).sort((a, b) => b.amount - a.amount);
-      return { from, to, total: total(list), count: list.length, by_category };
-    },
-
-    // GET /summary/monthly?from=2025-05&months=6
-    // → 月ごとの合計（棒グラフ用）
-    async getMonthlyTotals({ from, months }) {
-      const [y, m] = from.split('-').map(Number);
-      const out = [];
-      for (let i = 0; i < months; i++) {
-        const d = new Date(y, m - 1 + i, 1);
-        const key = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
-        out.push({ month: key, total: total(db.expenses.filter(e => e.date.startsWith(key))) });
-      }
-      return out;
-    },
-
-    // ---- 以下はバックアップ用（API化は任意） ----
-    async exportAll() {
-      return clone({
-        version: 2, exported_at: new Date().toISOString(),
-        categories: db.categories, expenses: db.expenses,
-      });
-    },
-
-    async importAll(data) {
-      if (!data || !Array.isArray(data.categories) || !Array.isArray(data.expenses)) {
-        throw new ApiError(400, 'バックアップファイルの形式が正しくありません');
-      }
-      db = {
-        categories: data.categories,
-        expenses: data.expenses,
-        nextId: {
-          category: Math.max(0, ...data.categories.map(c => c.id)) + 1,
-          expense: Math.max(0, ...data.expenses.map(e => e.id)) + 1,
-        },
-      };
-      save();
-    },
-
-    async reset() {
-      db = freshDb();
-      save();
-    },
+    // ---- 集計 ----
+    // GET /api/summary?from=&to=
+    getSummary: ({ from, to }) => request('GET', '/summary' + query({ from, to })),
+    // GET /api/summary/monthly?from=2026-05&months=6
+    getMonthlyTotals: ({ from, months }) => request('GET', '/summary/monthly' + query({ from, months })),
   };
 })();
