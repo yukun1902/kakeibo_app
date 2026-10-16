@@ -10,9 +10,15 @@
  *   expenses:   { id, category_id, amount, date, memo, created_at }
  */
 const Api = (() => {
-  // Go のサーバーから画面を開いたときは同じ場所の /api を使う。
-  // index.html をファイルとして直接開いたときは、ローカルのサーバーにつなぐ。
-  const BASE = location.protocol === 'file:' ? 'http://localhost:8080/api' : '/api';
+  // API の送り先を決める
+  //   ・Go のサーバー（http://localhost:8080）から画面を開いたとき → 同じ場所の /api
+  //   ・それ以外（VS Code の Live Server〔ポート5500〕や、index.html をファイルとして直接開いたとき）
+  //     → Go のサーバー（http://localhost:8080/api）に送る
+  //   Live Server は画面のファイルを見せるだけで、API の処理はできないため。
+  //   （どちらの場合も、Go のサーバーを go run . で起動しておく必要がある）
+  const API_SERVER = 'http://localhost:8080';
+  const servedByGo = location.port === '8080' && ['localhost', '127.0.0.1'].includes(location.hostname);
+  const BASE = servedByGo ? '/api' : `${API_SERVER}/api`;
   const TOKEN_KEY = 'okane-note:token';
 
   // Go側から返ってくるエラー（status は HTTP ステータス。0 はサーバーにつながらなかったとき）
@@ -58,7 +64,7 @@ const Api = (() => {
         body: body !== undefined ? JSON.stringify(body) : undefined,
       });
     } catch (e) {
-      throw new ApiError(0, 'サーバーに接続できません。サーバーが起動しているか確認してください');
+      throw new ApiError(0, 'サーバーに接続できません。kakeibo_app フォルダで go run . を実行して、サーバーを起動してください');
     }
 
     if (res.status === 204) return null; // 削除成功など、中身なし
