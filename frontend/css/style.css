@@ -720,3 +720,16 @@ ol.prose { padding-left: 1.4em; }
 /* 画面より短いときは上下中央に、長いときは上から並べる（中央寄せで上が切れないように） */
 .content.auth > :first-child { margin-top: auto; }
 .content.auth > :last-child { margin-bottom: auto; }
+
+/* 確認用アカウントの案内（ログイン画面） */
+.demo-box {
+  display: flex; align-items: center; gap: 12px;
+  margin-top: 16px; padding: 12px 14px;
+  border: 1px dashed color-mix(in srgb, var(--primary) 45%, transparent);
+  border-radius: 12px;
+  background: var(--primary-soft);
+}
+.demo-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.demo-text b { color: var(--primary); font-size: 13px; }
+.demo-text span { color: var(--text); overflow-wrap: anywhere; }
+.demo-btn { height: 40px; padding: 0 14px; font-size: 13px; background: var(--surface); flex-shrink: 0; }

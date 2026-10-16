@@ -984,18 +984,41 @@
     });
   }
 
+  // 確認用アカウント（db/seed.sql で登録している）。先生や他の人がすぐ試せるように、ログイン画面に表示する
+  // ※ 本物のサービスでは、パスワードを画面に出すことはしない。課題の確認用のための特別な表示
+  const DEMO_ACCOUNT = { email: 'demo@example.com', password: 'password123' };
+
   async function viewLogin() {
+    const page = authPage({
+      title: 'ログイン',
+      form: `<form class="form" id="authForm" novalidate>
+        ${emailField(state.lastEmail)}
+        ${passwordField('password', 'パスワード', 'current-password')}
+        <p class="form-error" role="alert" hidden></p>
+        <button class="btn primary block">ログイン</button>
+      </form>
+      <div class="demo-box">
+        <div class="demo-text">
+          <b>確認用アカウント</b>
+          <span>メール：${DEMO_ACCOUNT.email}</span>
+          <span>パスワード：${DEMO_ACCOUNT.password}</span>
+        </div>
+        <button type="button" class="btn soft demo-btn" data-action="fill-demo">入力する</button>
+      </div>`,
+      footer: 'アカウントをお持ちでない方は <a class="link" href="#/register">新規登録</a>',
+    });
     return {
-      ...authPage({
-        title: 'ログイン',
-        form: `<form class="form" id="authForm" novalidate>
-          ${emailField(state.lastEmail)}
-          ${passwordField('password', 'パスワード', 'current-password')}
-          <p class="form-error" role="alert" hidden></p>
-          <button class="btn primary block">ログイン</button>
-        </form>`,
-        footer: 'アカウントをお持ちでない方は <a class="link" href="#/register">新規登録</a>',
-      }),
+      ...page,
+      actions: {
+        ...page.actions,
+        // 「入力する」ボタン：確認用アカウントのメールアドレスとパスワードを入力欄に入れる
+        'fill-demo': () => {
+          const form = $app.querySelector('#authForm');
+          form.elements.email.value = DEMO_ACCOUNT.email;
+          form.elements.password.value = DEMO_ACCOUNT.password;
+          form.querySelector('.btn.primary').focus();
+        },
+      },
       mount() {
         bindAuthForm(async ({ email, password }) => {
           await Api.login({ email, password });

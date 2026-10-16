@@ -5,6 +5,24 @@ Go（net/http + database/sql + lib/pq）で作った、支出を記録する家�
 
 しくみを初心者向けに説明した解説は [docs/解説.md](docs/解説.md) にあります。
 
+## 確認用アカウント
+
+| メールアドレス | パスワード |
+|---|---|
+| `demo@example.com` | `password123` |
+
+- ログイン画面の「確認用アカウント」の「入力する」ボタンを押すと、自動で入力されます
+- サンプルの支出（直近2か月半ぶん）が入っているので、ログインしてすぐにホーム・一覧・グラフ・カレンダーの動きを確認できます
+- 新規登録から自分のアカウントを作って試すこともできます（新しいアカウントの支出は0件から始まります）
+
+### 確認の手順
+
+1. 下の「起動方法」でサーバーを起動する
+2. ブラウザで http://localhost:8080 を開く（PC では「PCでプレビューする」を押す）
+3. 確認用アカウントでログインする
+4. 「＋」ボタンから支出を追加し、一覧・グラフ・カレンダーに反映されることを確認する
+5. メニュー（右上の歯車）から「ログアウト」し、ログインしないと中に入れないことを確認する
+
 ## 構成
 
 ```
@@ -12,6 +30,7 @@ kakeibo_app/
 ├── main.go        … APIのコード（共通の部品・カテゴリー・支出・集計・サーバーの起動）
 ├── db/schema.sql  … テーブル定義（PostgreSQL）
 ├── db/add_users.sql … 会員テーブルの追加と、支出に user_id を足す変更
+├── db/seed.sql    … 最初に入れるデータ（カテゴリー・確認用アカウント・サンプルの支出）
 ├── .env           … 接続情報（gitには含めない）
 ├── .env.example   … .env の見本
 ├── frontend/      … 画面（HTML/CSS/JS）
@@ -20,12 +39,14 @@ kakeibo_app/
 
 ## 起動方法
 
-1. PostgreSQL にデータベースとテーブルを作る（初回のみ）
+1. PostgreSQL にデータベースとテーブルを作り、最初のデータを入れる（初回のみ。この順番で実行する）
    ```
    psql -U postgres -c "CREATE DATABASE kakeibo_app;"
    psql -U postgres -d kakeibo_app -f db/schema.sql
    psql -U postgres -d kakeibo_app -f db/add_users.sql
+   psql -U postgres -d kakeibo_app -f db/seed.sql
    ```
+   `seed.sql` は何度実行しても、同じデータが重なって入ることはありません。
 2. `.env.example` をコピーして `.env` を作り、接続情報（`DATABASE_URL`）と署名鍵（`JWT_SECRET`、32文字以上）を書く（作成済みなら不要）
 3. サーバーを起動する
    ```
